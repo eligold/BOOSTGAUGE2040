@@ -7,15 +7,15 @@ This was going to be a relaxed weekend afternoon project that turned into an imp
 #### Inspiration:
 
 1. ] https://youtu.be/pbqgrv5YSf0
-    I saw this video first, it is for a custom shift knob gear select indicator. While not the same screen it definitely got the creative gears turning so to speak. It is a video from a series detailing that extremely cool project and the creator upir is worth a follow if you like cars and gadgets.
+    I saw this video first, it is for a custom shift knob gear select indicator. While not the same screen it definitely got the creative gears turning so to speak. It is a video from a series detailing that extremely cool project and the creator [upir](https://www.youtube.com/@upir_upir) is worth a follow if you like cars and also gadgets.
 1. ] https://youtu.be/cZTx7T9uwA4
     Boost gauge using image series
 1. ] https://youtu.be/A00CvNi1rzQ
     Temperature gauge using another few different series of images
 1. ] https://youtu.be/i-TA3Xwja64
-    Using the meters widget from a port of lvgl v8 to programatically generate gauges, first one I stumbled upon like this. Shared no source code.```
+    Using the meters widget from a port of lvgl v8 to programatically generate gauges, first one I stumbled upon like this. Shared no source code.
 1. ] https://youtu.be/y_H7HM0oyoo
-    Another set of gauges based on static images. Doesn't benefit from the configurability of lvgl instead ysing only the lower level TFT_eSPI driver.
+    Another set of gauges based on static images. Doesn't benefit from the configurability of lvgl instead using only the lower level TFT_eSPI driver.
 1. ] https://youtu.be/gsTP7zljSBg
     Another project based on images with more dynamic sprite utilization.
 1. ] https://youtu.be/mqSe_uMpxIs
