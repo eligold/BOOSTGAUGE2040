@@ -18,6 +18,8 @@ This was going to be a relaxed weekend afternoon project that turned into an imp
     Another set of gauges based on static images. Doesn't benefit from the configurability of lvgl instead using only the lower level TFT_eSPI driver.
 1. ] https://youtu.be/gsTP7zljSBg
     Another project based on images with more dynamic sprite utilization.
+1. ] https://youtu.be/s4_fUwhw-dI
+    LVGL overview
 1. ] https://youtu.be/mqSe_uMpxIs
     This is a fun project for displaying animated images on the screen.
 1. ] https://youtu.be/g4ZVXwt5ueA
