@@ -14,7 +14,7 @@
 #define TP_SCL       7
 #define TP_RST       22
 #define TP_IRQ       21
-#define CST816S_ADDR 0x15 //S mytouch(TP_SDA,TP_SCL,TP_RST,TP_IRQ);
+#define CST816S_ADDR 0x15
 #define IMU_IRQ      23
 
 TouchDrvCSTXXX touch;
@@ -24,8 +24,6 @@ bool is_pressed = false;
 SensorQMI8658 qmi; //imu 
 volatile bool interruptFlag = false; //imu_flag
 void setFlag(void) { interruptFlag = true; }
-
-bool dev_switch = true;
 
 #define DRAW_BUF_SIZE (TFT_HOR_RES * TFT_VER_RES * (LV_COLOR_DEPTH / 8))
 uint32_t draw_buf[DRAW_BUF_SIZE / 4];
@@ -73,10 +71,7 @@ static lv_style_t icon_style;
 lv_color_t grey = LV_COLOR_MAKE(95,95,95);
 lv_color_t dark_grey = LV_COLOR_MAKE(57,57,57);
 lv_color_t red = LV_COLOR_MAKE(255,19,0);
-
-// ################
-int dev_val = 0;
-// ################
+lv_color_t blue;
 
 LV_FONT_DECLARE(microgramma);
 LV_IMAGE_DECLARE(NEEDLE1);
@@ -139,13 +134,14 @@ void setup() {
   make_scale(bar_scale,219,false,true,5,6,40,140,bar_custom_labels);
 
   main_color = lv_palette_lighten(LV_PALETTE_GREY, 1);
+  blue = blue = lv_palette_darken(LV_PALETTE_BLUE,4);
 
   static lv_style_t psi_indicator_style;
   lv_style_init(&psi_indicator_style);
   lv_style_set_text_font(&psi_indicator_style, &microgramma);
   lv_style_set_text_color(&psi_indicator_style, main_color);
   lv_style_set_line_color(&psi_indicator_style, main_color);
-  lv_style_set_length(&psi_indicator_style, 13U);
+  lv_style_set_length(&psi_indicator_style, 9U);
   lv_style_set_line_width(&psi_indicator_style, 2U);
   lv_obj_add_style(psi_scale, &psi_indicator_style, LV_PART_INDICATOR);
 
@@ -154,14 +150,14 @@ void setup() {
   lv_style_set_text_font(&bar_indicator_style, &lv_font_montserrat_10);
   lv_style_set_text_color(&bar_indicator_style, main_color);
   lv_style_set_line_color(&bar_indicator_style, main_color);
-  lv_style_set_length(&bar_indicator_style, 13U);
+  lv_style_set_length(&bar_indicator_style, 9U);
   lv_style_set_line_width(&bar_indicator_style, 4U);
   lv_obj_add_style(bar_scale, &bar_indicator_style, LV_PART_INDICATOR);
 
   static lv_style_t minor_ticks_style;
   lv_style_init(&minor_ticks_style);
   lv_style_set_line_color(&minor_ticks_style, main_color);
-  lv_style_set_length(&minor_ticks_style, 7U);
+  lv_style_set_length(&minor_ticks_style, 5U);
   lv_style_set_line_width(&minor_ticks_style, 2U);
   lv_obj_add_style(psi_scale, &minor_ticks_style, LV_PART_ITEMS);
   lv_obj_add_style(bar_scale, &minor_ticks_style, LV_PART_ITEMS);
@@ -194,7 +190,7 @@ void setup() {
   lv_scale_section_set_style(section, LV_PART_ITEMS, &section_minor_tick_style);
   lv_scale_section_set_style(section, LV_PART_MAIN, &section_main_line_style);
 
-  lv_obj_set_style_bg_color(lv_screen_active(), lv_palette_darken(LV_PALETTE_BLUE,4),LV_PART_MAIN);
+  lv_obj_set_style_bg_color(lv_screen_active(), lv_palette_darken(LV_PALETTE_BLUE,4), LV_PART_MAIN);
   lv_obj_t *sline = lv_image_create(lv_screen_active());
   lv_image_set_src(sline,&SLINE);
   lv_obj_center(sline);
@@ -213,21 +209,19 @@ void loop() { // h/t https://arduino.stackexchange.com/a/12588
     uint8_t status = qmi.getStatusRegister();
     if (status & SensorQMI8658::EVENT_ANY_MOTION) {} //capture millis() here. does this fire too on SIGNIFICANT?
   }
-/**/if (dev_switch) { data_ready = true; }
   if (!data_ready && my_ELM.nb_rx_state != ELM_GETTING_MSG) {
     my_ELM.sendCommand(pids[cur_PID]);
   } else {
     noInterrupts();
     data_ready = false;
     interrupts();
-    if (!dev_switch) { pid_handlers[cur_PID](); }
+    pid_handlers[cur_PID]();
     if (PID_COUNT == cur_PID + 1) {
       int angle = boost_data.boost_angle;
-/**/if (dev_switch) { if (dev_val < 150) { angle = dev_val++; delay(5); } else { angle = random(-31,-28); } }
       if (angle < 0) {
-        lv_scale_set_image_needle_value(bar_scale,needle,angle + 40);
+        lv_scale_set_image_needle_value(bar_scale, needle, angle + 40);
       } else {
-        lv_scale_set_image_needle_value(psi_scale,needle,angle);
+        lv_scale_set_image_needle_value(psi_scale, needle, angle);
       }
     }
     cur_PID = ++cur_PID % PID_COUNT;
@@ -282,7 +276,7 @@ void make_scale(lv_obj_t *scale, uint8_t size, bool inner, bool center, uint8_t 
   lv_scale_set_text_src(scale, labels);
 }
 
-static void touchpad_read(lv_indev_t *indev, lv_indev_data_t *data) {
+void touchpad_read(lv_indev_t *indev, lv_indev_data_t *data) {
   uint8_t last_x = 0;
   uint8_t last_y = 0;
   if(is_pressed) {
@@ -292,9 +286,11 @@ static void touchpad_read(lv_indev_t *indev, lv_indev_data_t *data) {
       last_x = x[0];
       last_y = y[0];
       data->state = LV_INDEV_STATE_PR;
+      lv_obj_set_style_bg_color(lv_screen_active(),red,LV_PART_MAIN);
     }
   } else {
     data->state = LV_INDEV_STATE_REL;
+    lv_obj_set_style_bg_color(lv_screen_active(),blue,LV_PART_MAIN);
   }
   data->point.x = last_x;
   data->point.y = last_y;
