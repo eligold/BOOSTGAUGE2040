@@ -1,8 +1,12 @@
 <h1 align="center"> RP2040 LVGL Car OBD-II Gauge </h1>
+<br>
+<p align="center"><img src="doc/IMG_6330.jpg" alt="prototype view" width="50%"><img src="doc/dash.png" alt="dashboard gauge" width="50%"></p>
 
 Programatically generate gauges on a round touchscreen with LVGL for infite flexibility in what data is displayed and how.
 
-This was going to be a relaxed weekend afternoon project that turned into an impromptu all-nighter. I'm documenting this as much to show off the results as I am to highlight the development pitfalls and highlight ways for others to avoid some of my own mistakes.
+This was going to be a relaxed weekend afternoon project that turned into an impromptu all-nighter. I'm documenting this as much to show off the results as I am to highlight the development pitfalls and ways for others to avoid some of my own mistakes. Of course you can buy customizable aftermarket gauges but...
+
+<p align="center"><img src="doc/rick.gif" alt="I make my own stuff"></p>
 
 #### Inspiration:
 
@@ -27,4 +31,4 @@ This was going to be a relaxed weekend afternoon project that turned into an imp
 1. ] https://youtu.be/HzHRJd7rihE
     Star wars tactical display is another fun diversion. Uses another lower-level graphics library and a dumb screen but the display elements are largely generated with code. Very neat project.
 1. ] https://youtu.be/jis1MC5Tm8k
-    accelerometer power save idea 🤌
+    accelerometer power save idea 🤌 and also a cool project in its own right
