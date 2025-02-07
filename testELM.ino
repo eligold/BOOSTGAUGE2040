@@ -14,15 +14,15 @@ ELM327 my_ELM;
 static const float C_kPa = 17.37; // rev/m*°K*s^2
 
 typedef struct struct_boost { // IAT * MAF * C / RPM
-  float iat = 225.9;
+  float iat = 225.9;//   °C
   float rpm = 3900.25;
-  float maf = 131.9;
-  uint8_t atm = 101;
+  float maf = 131.9; 
+  uint8_t atm = 101; // atm in kPa
   bool is_psi = true;
   float iat_x_c = iat * C_kPa; //       °K (sec/min factored in C_kPa)
   float iat_o_rpm = iat_x_c / rpm; // °K/rpm
-  float abs_kPa = iat_o_rpm * maf; //   °K*gps/rpm 
-  uint8_t boost_angle = int(trunc(0.145038 * (abs_kPa - atm) * PSI_SCALE)); // atm in kPa
+  float abs_kPa = iat_o_rpm * maf;
+  uint8_t boost_angle = int(trunc(PSI_CONV_FACTOR * (abs_kPa - atm) * PSI_SCALE));
 } struct_boost;
 
 volatile struct_boost boost_data;
@@ -65,8 +65,8 @@ void loop() {
   uint8_t last_state = state;
   state = my_ELM.nb_rx_state;
   if (state != last_state) {
-    Serial.print(last_state);
-  } else { Serial.println(last_state); }
+    Serial.println(last_state);
+  } else { Serial.print(last_state); }
   if (try_again > 0) {
     if (millis() - try_time > 10000) {
       try_time = millis();
@@ -82,51 +82,42 @@ void loop() {
   }
 }
 
-bool handle_IAT() { float temp = my_ELM.intakeAirTemp();
-  if (0.0 != temp) {
-    Serial.print("temp: ");Serial.println(temp);
-    boost_data.iat = temp;
-    boost_data.iat_x_c = (temp + 273.15f) * C_kPa;
-    return true;
-  } else { return false; }
+bool handle_IAT() { 
+  float temp = my_ELM.intakeAirTemp();
+  bool ready = 0.0 != temp;
+  if (ready) { boost_data.iat = temp + 273.15; }
+  return ready;
 }
 
-bool handle_RPM() { float rpm = my_ELM.rpm();
-  if (0.0 != rpm) {
-    Serial.print("rpm: ");Serial.println(rpm);
-    boost_data.rpm = rpm;
-    boost_data.iat_o_rpm = boost_data.iat_x_c / rpm;
-    return true;
-  } else { return false; }
+bool handle_RPM() {
+  float rpm = my_ELM.rpm();
+  bool ready = 0.0 != rpm;
+  if (ready) { boost_data.rpm = rpm; }
+  return ready;
 }
 
-bool handle_MAF() { float maf = my_ELM.mafRate();
-  if (0.0 != maf) {
-    Serial.print("maf: ");Serial.println(maf);
-    boost_data.maf = maf;
-    boost_data.abs_kPa = boost_data.iat_o_rpm * maf;
-    return true;
-  } else { return false; }
+bool handle_MAF() {
+  float maf = my_ELM.mafRate();
+  bool ready = 0.0 != maf;
+  if (ready) { boost_data.maf = maf; }
+  return ready;
 }
 
 bool handle_ATM() {
   uint8_t atm = my_ELM.absBaroPressure();
-  if (0 < atm) {
-    Serial.print("atm: ");Serial.println(atm);
-    boost_data.atm = atm;
-    return true;
-  } else { return false; }
+  bool ready = 0 < atm;
+  if (ready) { boost_data.atm = atm; }
+  return ready;
 }
 
 uint8_t calc_angle() { // SET A FLAG FOR WHICH SCALE TO USE!!!
-  float abs_kPa = C_kPa * boost_data.iat * boost_data.maf / boost_data.rpm ;
-  uint8_t atm = boost_data.atm;
+  float abs_kPa = C_kPa * boost_data.iat * boost_data.maf / boost_data.rpm;
   float intermediate;
-  if (atm < abs_kPa) {
-    intermediate = PSI_CONV_FACTOR * (abs_kPa - atm);
+  if (boost_data.atm < abs_kPa) {
+    intermediate = PSI_CONV_FACTOR * (abs_kPa - boost_data.atm);
     boost_data.is_psi = true;
   } else {
-    intermediate = max(40 - ((atm - abs_kPa) / 25), 0);
+    intermediate = max(40 - ((boost_data.atm - abs_kPa) / 25), 0);
     boost_data.is_psi = false;
   } 
   boost_data.boost_angle = int(trunc(intermediate * PSI_SCALE)); //\ 100kPa/bar, 4x & inverted
