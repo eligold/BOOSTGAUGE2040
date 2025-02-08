@@ -14,15 +14,12 @@ ELM327 my_ELM;
 static const float C_kPa = 17.37; // rev/m*°K*s^2
 
 typedef struct struct_boost { // IAT * MAF * C / RPM
-  float iat = 225.9;//   °C
-  float rpm = 3900.25;
-  float maf = 131.9; 
-  uint8_t atm = 101; // atm in kPa
+  float iat = 225.9; //   °K
+  float rpm = 3900.25; // rev/min
+  float maf = 131.9; //   g/s
+  uint8_t atm = 101; //   kPa
   bool is_psi = true;
-  float iat_x_c = iat * C_kPa; //       °K (sec/min factored in C_kPa)
-  float iat_o_rpm = iat_x_c / rpm; // °K/rpm
-  float abs_kPa = iat_o_rpm * maf;
-  uint8_t boost_angle = int(trunc(PSI_CONV_FACTOR * (abs_kPa - atm) * PSI_SCALE));
+  uint8_t boost_angle = 133;
 } struct_boost;
 
 volatile struct_boost boost_data;
@@ -82,10 +79,10 @@ void loop() {
   }
 }
 
-bool handle_IAT() { 
+bool handle_IAT() {
   float temp = my_ELM.intakeAirTemp();
   bool ready = 0.0 != temp;
-  if (ready) { boost_data.iat = temp + 273.15; }
+  if (ready) { boost_data.iat = temp + 273.15f; }
   return ready;
 }
 
@@ -117,7 +114,7 @@ uint8_t calc_angle() { // SET A FLAG FOR WHICH SCALE TO USE!!!
     intermediate = PSI_CONV_FACTOR * (abs_kPa - boost_data.atm);
     boost_data.is_psi = true;
   } else {
-    intermediate = max(40 - ((boost_data.atm - abs_kPa) / 25), 0);
+    intermediate = max(4.0 - ((boost_data.atm - abs_kPa) / 25), 0.0);
     boost_data.is_psi = false;
   } 
   boost_data.boost_angle = int(trunc(intermediate * PSI_SCALE)); //\ 100kPa/bar, 4x & inverted

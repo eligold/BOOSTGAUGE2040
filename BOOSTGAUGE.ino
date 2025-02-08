@@ -20,6 +20,7 @@
 #define TFT_HOR_RES  240
 #define TFT_VER_RES  TFT_HOR_RES
 #define TFT_ROTATION LV_DISPLAY_ROTATION_90
+#define ELM_TIMEOUT  1000
 
 TouchDrvCSTXXX touch;
 int16_t x[5], y[5];
@@ -39,43 +40,38 @@ lv_display_t *disp;
 #define ELM_SER   Serial1
 #define ELM_DEBUG true
 ELM327 my_ELM;
-volatile bool data_ready = false;
-void serialEvent1() { if (ELM_SER.available()) { data_ready = true; } }
+// volatile bool data_ready = false;
+// void serialEvent1() { if (ELM_SER.available()) { data_ready = true; } }
 static const float C_kPa = 17.37; // rev/m*°K*s^2
 
-typedef struct struct_boost {
-  float iat_x_c = 225.9 * C_kPa; //       °K (sec/min factored in C_kPa)
-  float iat_o_rpm = iat_x_c / 3900.25; // °K/rpm
-  float abs_kPa = iat_o_rpm * 131.9; //   °K*gps/rpm 
-  int boost_angle = int(trunc(0.145038 * (abs_kPa - 101) * 10)); // atm in kPa
+typedef struct struct_boost { // IAT * MAF * C / RPM
+  float iat = 225.9; //   °K
+  float rpm = 3900.25; // rev/min
+  float maf = 131.9; //   g/s
+  uint8_t atm = 101; //   kPa
+  bool is_psi = true;
+  uint8_t boost_angle = 133;
 } struct_boost;
 
 volatile struct_boost boost_data;
 volatile uint8_t cur_PID = 0;
 volatile uint8_t try_again = 0;
-volatile bool query_in_progress = false;
-lv_color_t main_color;
 volatile unsigned long last_time;
 volatile unsigned long try_time;
 volatile uint32_t increment = 0;
+  //                    iat     rpm     maf     atm
+const char* pids[] = { "010F", "010C", "0110", "0133" };
 
-const char* pids[] = {
-  "010F", // iat
-  "010C", // rpm
-  "0110", // maf
-  "0133"  // atm
-};
-
-void handle_IAT();
-void handle_MAF();
-void handle_RPM();
-void handle_ATM(); // void handle_BAT();
-void (*pid_handlers[])() = { handle_IAT, handle_RPM, handle_MAF, handle_ATM };
+bool handle_IAT();
+bool handle_MAF();
+bool handle_RPM();
+bool handle_ATM(); // void handle_BAT();
+bool (*pid_handlers[])() = { handle_IAT, handle_RPM, handle_MAF, handle_ATM };
 
 const int PID_COUNT = sizeof(pids)/sizeof(pids[0]);
 lv_color_t grey = LV_COLOR_MAKE(95,95,95);
-lv_color_t dark_grey = LV_COLOR_MAKE(57,57,57);
 lv_color_t red = LV_COLOR_MAKE(255,19,0);
+lv_color_t main_color;
 lv_color_t blue;
 
 LV_FONT_DECLARE(microgramma);
@@ -114,89 +110,12 @@ void setup() {
   ELM_SER.setTX(PIN_TX);
   ELM_SER.setRX(PIN_RX);
   ELM_SER.begin(38400);
-  if (!my_ELM.begin(ELM_SER, ELM_DEBUG, 2000)) { try_again = 5; } // NO ELM327!!!
-
-  lv_init();
-  disp = my_tft_espi_create(TFT_HOR_RES, TFT_VER_RES, draw_buf, sizeof(draw_buf));
-  lv_indev_t *indev = lv_indev_create(); // touch input device
-  lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
-  lv_indev_set_read_cb(indev, touchpad_read);
-  psi_scale = lv_scale_create(lv_screen_active());
-  static const char *psi_custom_labels[] = {
-      "         0 PSI","","2","","4","","6","","8","","10","","","13","",NULL };
-  make_scale(psi_scale, 237, true, true, 31, 2, 150, 180, psi_custom_labels);
-  lv_obj_set_style_bg_opa(psi_scale, LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_color(psi_scale,lv_color_hex(0x051209),0);
-  lv_obj_set_style_radius(psi_scale,240,0);
-  needle = lv_image_create(lv_screen_active());
-  lv_image_set_src(needle,&NEEDLE1);
-  lv_scale_set_image_needle_value(psi_scale,needle,133);
-
-  static const char *bar_custom_labels[] = { "                           -1 BAR\n", NULL };
-  bar_scale = lv_scale_create(lv_screen_active());
-  make_scale(bar_scale, 219, false, true, 6, 7, 40, 140, bar_custom_labels);
+  if (!my_ELM.begin(ELM_SER, ELM_DEBUG, ELM_TIMEOUT)) { try_again = 5; } // NO ELM327!!!
 
   main_color = lv_palette_lighten(LV_PALETTE_GREY, 1);
   blue = lv_palette_darken(LV_PALETTE_BLUE,4);
-
-  static lv_style_t psi_indicator_style;
-  lv_style_init(&psi_indicator_style);
-  lv_style_set_text_font(&psi_indicator_style, &microgramma);
-  lv_style_set_text_color(&psi_indicator_style, main_color);
-  lv_style_set_line_color(&psi_indicator_style, main_color);
-  lv_style_set_length(&psi_indicator_style, 9);
-  lv_style_set_line_width(&psi_indicator_style, 3);
-  lv_obj_add_style(psi_scale, &psi_indicator_style, LV_PART_INDICATOR);
-
-  static lv_style_t bar_indicator_style;
-  lv_style_init(&bar_indicator_style);
-  lv_style_set_text_font(&bar_indicator_style, &lv_font_montserrat_10);
-  lv_style_set_text_color(&bar_indicator_style, main_color);
-  lv_style_set_line_color(&bar_indicator_style, main_color);
-  lv_style_set_length(&bar_indicator_style, 9);
-  lv_style_set_line_width(&bar_indicator_style, 2);
-  lv_obj_add_style(bar_scale, &bar_indicator_style, LV_PART_INDICATOR);
-
-  static lv_style_t minor_ticks_style;
-  lv_style_init(&minor_ticks_style);
-  lv_style_set_line_color(&minor_ticks_style, main_color);
-  lv_style_set_length(&minor_ticks_style, 5);
-  lv_style_set_line_width(&minor_ticks_style, 2);
-  lv_obj_add_style(psi_scale, &minor_ticks_style, LV_PART_ITEMS);
-  lv_obj_add_style(bar_scale, &minor_ticks_style, LV_PART_ITEMS);
-
-  static lv_style_t main_line_style;
-  lv_style_init(&main_line_style);
-  lv_style_set_arc_color(&main_line_style, main_color);
-  lv_style_set_arc_width(&main_line_style, 2);
-  lv_obj_add_style(bar_scale, &main_line_style, 0);
-
-  static lv_style_t section_minor_tick_style;
-  static lv_style_t section_label_style;
-  static lv_style_t section_main_line_style;
-  lv_style_init(&section_label_style);
-  lv_style_init(&section_minor_tick_style);
-  lv_style_init(&section_main_line_style);
-
-  lv_style_set_text_font(&section_label_style, &microgramma);
-  lv_style_set_text_color(&section_label_style, red);
-  lv_style_set_line_color(&section_label_style, red);
-  lv_style_set_line_width(&section_label_style, 2);
-  lv_style_set_line_color(&section_minor_tick_style, red);
-  lv_style_set_line_width(&section_minor_tick_style, 2);
-  lv_style_set_arc_color(&section_main_line_style, red); // lv_style_set_arc_image_src(
-  lv_style_set_arc_width(&section_main_line_style, 4);
-
-  lv_scale_section_t *section = lv_scale_add_section(psi_scale);
-  lv_scale_section_set_range(section, 100, 150);
-  lv_scale_section_set_style(section, LV_PART_INDICATOR, &section_label_style);
-  lv_scale_section_set_style(section, LV_PART_ITEMS, &section_minor_tick_style);
-  lv_scale_section_set_style(section, LV_PART_MAIN, &section_main_line_style);
-
-  lv_obj_set_style_bg_color(lv_screen_active(), main_color, 0);
-  lv_obj_t *sline = lv_image_create(lv_screen_active());
-  lv_image_set_src(sline,&SLINE);
-  lv_obj_center(sline);
+  make_screen_elements();
+  make_styles();
   last_time = millis();
   try_time = millis();
 }
@@ -213,52 +132,69 @@ void loop() {
     uint8_t status = qmi.getStatusRegister();
     if (status & SensorQMI8658::EVENT_ANY_MOTION) {} //capture millis() here
   } // does this fire too on SIGNIFICANT?
-  if (try_again > 0 && millis() - try_time > 10000) {
+  if (try_again > 0 && millis() - try_time > 10 * ELM_TIMEOUT) {
     try_time = millis();
-    if (!my_ELM.begin(ELM_SER, ELM_DEBUG, 2000)) { --try_again; }
+    if (!my_ELM.begin(ELM_SER, ELM_DEBUG, ELM_TIMEOUT)) { --try_again; }
     else { try_again = 0; }
   } else {
   // if (!data_ready) {
   //   if (my_ELM.nb_rx_state != ELM_GETTING_MSG) { my_ELM.sendCommand(pids[cur_PID]); }
-  // } else {
-  //   noInterrupts();
-  //   data_ready = false;
-  //   interrupts();
-    pid_handlers[cur_PID]();
-    if (PID_COUNT == cur_PID + 1) {
-      int angle = boost_data.boost_angle;
-      lv_scale_set_image_needle_value((angle < 0 ? bar_scale : psi_scale), needle, angle);
+  // } else { noInterrupts(); data_ready = false; interrupts(); ...
+    if(pid_handlers[cur_PID]()) {
+      calc_angle();
+      lv_scale_set_image_needle_value(
+          (boost_data.is_psi ? psi_scale : bar_scale), needle, boost_data.boost_angle);
+
+      if (PID_COUNT == cur_PID + 1) {
+        Serial.print("angle: ");
+        if (boost_data.is_psi) { Serial.println(boost_data.boost_angle);
+        } else { Serial.println(boost_data.boost_angle - 40); }
+      }
+      cur_PID = ++cur_PID % PID_COUNT;
+      lv_tick_inc(millis() - last_time);
     }
-    cur_PID = ++cur_PID % PID_COUNT;
-    lv_tick_inc(millis() - last_time);
   }
 }
 
-bool check_data(String st) {
-  if (ELM_SUCCESS == my_ELM.nb_rx_state) { return true; }
-  else { boost_data.boost_angle = 133; return false; Serial.print("bad "); Serial.println(st);}
+bool handle_IAT() {
+  float temp = my_ELM.intakeAirTemp();
+  bool ready = 0.0 != temp;
+  if (ready) { boost_data.iat = temp + 273.15f; }
+  return ready;
 }
 
-void handle_IAT() { float temp = my_ELM.intakeAirTemp();
-  if (check_data("iat")) { boost_data.iat_x_c = (temp + 273.15f) * C_kPa; }
+bool handle_RPM() {
+  float rpm = my_ELM.rpm();
+  bool ready = 0.0 != rpm;
+  if (ready) { boost_data.rpm = rpm; }
+  return ready;
 }
 
-void handle_RPM() { float rpm = my_ELM.rpm();
-  if (check_data("rpm")) { boost_data.iat_o_rpm = boost_data.iat_x_c / rpm; }
+bool handle_MAF() {
+  float maf = my_ELM.mafRate();
+  bool ready = 0.0 != maf;
+  if (ready) { boost_data.maf = maf; }
+  return ready;
 }
 
-void handle_MAF() { float maf = my_ELM.mafRate();
-  if (check_data("maf")) { boost_data.abs_kPa = boost_data.iat_o_rpm * maf; }
+bool handle_ATM() {
+  uint8_t atm = my_ELM.absBaroPressure();
+  bool ready = 0 < atm;
+  if (ready) { boost_data.atm = atm; }
+  return ready;
 }
 
-void handle_ATM() {
-  uint8_t atm = int(my_ELM.absBaroPressure());
+void calc_angle() { // SET A FLAG FOR WHICH SCALE TO USE!!!
+  float abs_kPa = C_kPa * boost_data.iat * boost_data.maf / boost_data.rpm;
   float intermediate;
-  if (check_data("atm")) {
-    if (atm < boost_data.abs_kPa) { intermediate = PSI_CONV_FACTOR * (boost_data.abs_kPa - atm);
-    } else { intermediate = max(40 - ((atm - boost_data.abs_kPa) / 25), 0); } 
-    boost_data.boost_angle = int(trunc(intermediate * PSI_SCALE)); //\ 100kPa/bar, 4x & inverted
+  if (boost_data.atm <= abs_kPa) {
+    intermediate = PSI_CONV_FACTOR * (abs_kPa - boost_data.atm);
+    boost_data.is_psi = true;
+  } else { // if I did the math right the "max(" is probably superfluous
+    intermediate = max(4.0 - ((boost_data.atm - abs_kPa) / 25), 0.0);
+    boost_data.is_psi = false; //\ 100kPa/bar, 4x & inverted
   }
+  boost_data.boost_angle = uint8_t(trunc(intermediate * PSI_SCALE));
 }
 
 typedef struct {
@@ -321,4 +257,88 @@ void touchpad_read(lv_indev_t *indev, lv_indev_data_t *data) {
   }
   data->point.x = last_x;
   data->point.y = last_y;
+}
+
+void make_screen_elements() {
+  lv_init();
+  disp = my_tft_espi_create(TFT_HOR_RES, TFT_VER_RES, draw_buf, sizeof(draw_buf));
+  lv_indev_t *indev = lv_indev_create(); // touch input device
+  lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+  lv_indev_set_read_cb(indev, touchpad_read);
+
+  psi_scale = lv_scale_create(lv_screen_active());
+  static const char *psi_custom_labels[] = {
+      "         0 PSI","","2","","4","","6","","8","","10","","","13","",NULL };
+  make_scale(psi_scale, 237, true, true, 31, 2, 150, 180, psi_custom_labels);
+  lv_obj_set_style_bg_opa(psi_scale, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_color(psi_scale,lv_color_hex(0x051209),0);
+  lv_obj_set_style_radius(psi_scale,240,0);
+  needle = lv_image_create(lv_screen_active());
+  lv_image_set_src(needle,&NEEDLE1);
+  lv_scale_set_image_needle_value(psi_scale,needle,boost_data.boost_angle);
+
+  static const char *bar_custom_labels[] = { "                           -1 BAR\n", NULL };
+  bar_scale = lv_scale_create(lv_screen_active());
+  make_scale(bar_scale, 219, false, true, 6, 7, 40, 140, bar_custom_labels);
+
+  lv_obj_set_style_bg_color(lv_screen_active(), main_color, 0);
+  lv_obj_t *sline = lv_image_create(lv_screen_active());
+  lv_image_set_src(sline,&SLINE);
+  lv_obj_center(sline);
+}
+
+void make_styles() {
+  static lv_style_t psi_indicator_style;
+  lv_style_init(&psi_indicator_style);
+  lv_style_set_text_font(&psi_indicator_style, &microgramma);
+  lv_style_set_text_color(&psi_indicator_style, main_color);
+  lv_style_set_line_color(&psi_indicator_style, main_color);
+  lv_style_set_length(&psi_indicator_style, 9);
+  lv_style_set_line_width(&psi_indicator_style, 3);
+  lv_obj_add_style(psi_scale, &psi_indicator_style, LV_PART_INDICATOR);
+
+  static lv_style_t bar_indicator_style;
+  lv_style_init(&bar_indicator_style);
+  lv_style_set_text_font(&bar_indicator_style, &lv_font_montserrat_10);
+  lv_style_set_text_color(&bar_indicator_style, main_color);
+  lv_style_set_line_color(&bar_indicator_style, main_color);
+  lv_style_set_length(&bar_indicator_style, 9);
+  lv_style_set_line_width(&bar_indicator_style, 2);
+  lv_obj_add_style(bar_scale, &bar_indicator_style, LV_PART_INDICATOR);
+
+  static lv_style_t minor_ticks_style;
+  lv_style_init(&minor_ticks_style);
+  lv_style_set_line_color(&minor_ticks_style, main_color);
+  lv_style_set_length(&minor_ticks_style, 5);
+  lv_style_set_line_width(&minor_ticks_style, 2);
+  lv_obj_add_style(psi_scale, &minor_ticks_style, LV_PART_ITEMS);
+  lv_obj_add_style(bar_scale, &minor_ticks_style, LV_PART_ITEMS);
+
+  static lv_style_t main_line_style;
+  lv_style_init(&main_line_style);
+  lv_style_set_arc_color(&main_line_style, main_color);
+  lv_style_set_arc_width(&main_line_style, 2);
+  lv_obj_add_style(bar_scale, &main_line_style, 0);
+
+  static lv_style_t section_minor_tick_style;
+  static lv_style_t section_label_style;
+  static lv_style_t section_main_line_style;
+  lv_style_init(&section_label_style);
+  lv_style_init(&section_minor_tick_style);
+  lv_style_init(&section_main_line_style);
+
+  lv_style_set_text_font(&section_label_style, &microgramma);
+  lv_style_set_text_color(&section_label_style, red);
+  lv_style_set_line_color(&section_label_style, red);
+  lv_style_set_line_width(&section_label_style, 2);
+  lv_style_set_line_color(&section_minor_tick_style, red);
+  lv_style_set_line_width(&section_minor_tick_style, 2);
+  lv_style_set_arc_color(&section_main_line_style, red); // lv_style_set_arc_image_src(
+  lv_style_set_arc_width(&section_main_line_style, 4);
+
+  lv_scale_section_t *section = lv_scale_add_section(psi_scale);
+  lv_scale_section_set_range(section, 100, 150);
+  lv_scale_section_set_style(section, LV_PART_INDICATOR, &section_label_style);
+  lv_scale_section_set_style(section, LV_PART_ITEMS, &section_minor_tick_style);
+  lv_scale_section_set_style(section, LV_PART_MAIN, &section_main_line_style);
 }
