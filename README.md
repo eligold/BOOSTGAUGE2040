@@ -6,7 +6,7 @@
 ### Overview
 This is a project I took on to demonstrate programatically generated gauges on a round touchscreen with an interface built using LVGL for infite flexibility in what data is displayed and how. I learned when building my Raspberry Pi-based backup camera system that although my car has a sensor to detect intake manifold pressure, that data is not made available in the barebones OBD-II datastream. My workaround involves plugging values into the ideal gas law equation tweaked to accont for volumetric and mass flow rate. Values derived from the Mass Air Flow sensor, the Intake Air Tempterature sensor, the engine speed (RPM), and the measured atmospheric pressure along with constants like $ R $ and the molar mass of air can be used to determine instantaneous boost with the below equation:
 
-### $$ P \cdot V̇ = ṅ \cdot R \cdot T^{[1]} $$
+<p align="center"><img src="docs/PVnRT.png" alt="P * V̇ = ṅ * R * T [1]"></p>
 
 I have long admired the 2013 Moto X for its early adoption of an efficiency coproccesor providing reduction in battery draw for always-on voice assistant features and there has always been something satisfying to me about hardware tailored to a particular task. With an aging Pi4 struggling to manage processing one video stream while recording another I decided to offload my car data logger display to a more suitable piece of hardware with the eventual intent of setting it up as an optionally standalone system.
 
