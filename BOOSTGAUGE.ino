@@ -140,18 +140,15 @@ void loop() {
   // if (!data_ready) {
   //   if (my_ELM.nb_rx_state != ELM_GETTING_MSG) { my_ELM.sendCommand(pids[cur_PID]); }
   // } else { noInterrupts(); data_ready = false; interrupts(); ...
-    if(pid_handlers[cur_PID]()) {
-      calc_angle();
-      lv_scale_set_image_needle_value(
-          (boost_data.is_psi ? psi_scale : bar_scale), needle, boost_data.boost_angle);
-
+    if(pid_handlers[cur_PID]()) { // calc_angle();
       if (PID_COUNT == cur_PID + 1) {
+        calc_angle();
+        lv_tick_inc(millis() - last_time);
         Serial.print("angle: ");
         if (boost_data.is_psi) { Serial.println(boost_data.boost_angle);
         } else { Serial.println(boost_data.boost_angle - 40); }
       }
-      cur_PID = ++cur_PID % PID_COUNT;
-      lv_tick_inc(millis() - last_time);
+      cur_PID = ++cur_PID % PID_COUNT; // lv_tick_inc(millis() - last_time);
     }
   }
 }
@@ -184,17 +181,18 @@ bool handle_ATM() {
   return ready;
 }
 
-void calc_angle() { // SET A FLAG FOR WHICH SCALE TO USE!!!
+void calc_angle() {
   float abs_kPa = C_kPa * boost_data.iat * boost_data.maf / boost_data.rpm;
   float intermediate;
   if (boost_data.atm <= abs_kPa) {
     intermediate = PSI_CONV_FACTOR * (abs_kPa - boost_data.atm);
     boost_data.is_psi = true;
   } else { // if I did the math right the "max(" is probably superfluous
-    intermediate = max(4.0 - ((boost_data.atm - abs_kPa) / 25), 0.0);
+    intermediate = max(4.0 - ((float(boost_data.atm) - abs_kPa) / 25), 0.0);
     boost_data.is_psi = false; //\ 100kPa/bar, 4x & inverted
   }
   boost_data.boost_angle = uint8_t(trunc(intermediate * PSI_SCALE));
+  lv_scale_set_image_needle_value((boost_data.is_psi ? psi_scale : bar_scale), needle, boost_data.boost_angle);
 }
 
 typedef struct {
