@@ -1,9 +1,6 @@
 #include <ELMduino.h>
 #include <lvgl.h>
-#include <Wire.h>
 #include <TFT_eSPI.h>
-#include "TouchDrvCSTXXX.hpp"
-#include "SensorQMI8658.hpp"
 
 #define ARDUINO_ARCH_RP2040 1 // import proper TFT_eSPI settings
 #define PSI_CONV_FACTOR 0.145038f // PSI/kPa
@@ -11,27 +8,14 @@
 #define PIN_3V3      18
 #define PIN_RX       17
 #define PIN_TX       16
-#define TP_SDA       6
-#define TP_SCL       7
-#define TP_RST       22
-#define TP_IRQ       21
-#define CST816S_ADDR 0x15
-#define IMU_IRQ      23
 #define TFT_HOR_RES  240
 #define TFT_VER_RES  TFT_HOR_RES
 #define TFT_ROTATION LV_DISPLAY_ROTATION_90
 #define ELM_TIMEOUT  1000
 
-TouchDrvCSTXXX touch;
-int16_t x[5], y[5];
-bool is_pressed = false;
-
-SensorQMI8658 qmi; //imu 
-volatile bool interruptFlag = false; //imu_flag
-void setFlag(void) { interruptFlag = true; }
-
-#define DRAW_BUF_SIZE (TFT_HOR_RES * TFT_VER_RES * (LV_COLOR_DEPTH / 8))
-uint32_t draw_buf[DRAW_BUF_SIZE / 4];
+#define DRAW_BUF_SIZE (TFT_HOR_RES * TFT_VER_RES / 2)
+uint32_t draw_buf1[DRAW_BUF_SIZE / 4];
+uint32_t draw_buf2[DRAW_BUF_SIZE / 4];
 lv_obj_t *psi_scale;
 lv_obj_t *bar_scale;
 lv_obj_t *needle;
@@ -42,11 +26,11 @@ lv_display_t *disp;
 ELM327 my_ELM;
 // volatile bool data_ready = false;
 // void serialEvent1() { if (ELM_SER.available()) { data_ready = true; } }
-static const float C_kPa = 17.37; // rev/m*°K*s^2
+static const float C_kPa = 17.37; // 289.526918???; // rev/min*°K*s^2 * 1kPa/1000Pa
 
 typedef struct struct_boost { // IAT * MAF * C / RPM
   float iat = 225.9; //   °K
-  float rpm = 3900.25; // rev/min
+  float rpm = 3900.25; // rev/min TODO 1min/60s???
   float maf = 131.9; //   g/s
   uint8_t atm = 101; //   kPa
   bool is_psi = true;
@@ -57,7 +41,7 @@ volatile struct_boost boost_data;
 volatile uint8_t cur_PID = 0;
 volatile uint8_t try_again = 0;
 volatile unsigned long last_time;
-volatile unsigned long try_time;
+volatile unsigned long atm_time; // check once per minute, maybe 10s
 volatile uint32_t increment = 0;
   //                    iat     rpm     maf     atm
 const char* pids[] = { "010F", "010C", "0110", "0133" };
@@ -82,31 +66,6 @@ void setup() {
   Serial.begin(115200);
   pinMode(PIN_3V3,OUTPUT);
   digitalWrite(PIN_3V3,HIGH); //lv for level translator to ELM327 5V
-  pinMode(TP_RST, OUTPUT);
-  digitalWrite(TP_RST, LOW);
-  delay(30);
-  digitalWrite(TP_RST, HIGH);
-  delay(50);
-  Wire1.setSDA(TP_SDA);
-  Wire1.setSCL(TP_SCL);
-  Wire1.begin();
-  touch.setPins(TP_RST, TP_IRQ);
-  if (touch.begin(Wire1, CST816S_ADDR, TP_SDA, TP_SCL)) {
-    attachInterrupt(TP_IRQ, []() { is_pressed = true; }, FALLING);
-  }
-  qmi.setPins(IMU_IRQ);
-  if (!qmi.begin(Wire1, QMI8658_L_SLAVE_ADDRESS, TP_SDA, TP_SCL)) { while(1); } // NO SENSOR!!!
-  qmi.configAccelerometer(SensorQMI8658::ACC_RANGE_4G, SensorQMI8658::ACC_ODR_500Hz);
-  qmi.enableAccelerometer();
-  uint8_t modeCtrl = SensorQMI8658::ANY_MOTION_EN_X |
-                     SensorQMI8658::ANY_MOTION_EN_Y |
-                     SensorQMI8658::ANY_MOTION_EN_Z |
-                     SensorQMI8658::NO_MOTION_EN_X |
-                     SensorQMI8658::NO_MOTION_EN_Y |
-                     SensorQMI8658::NO_MOTION_EN_Z ;
-  qmi.configMotion(modeCtrl, 1.0, 1.0, 1.0, 1, 0.1, 0.1, 0.1, 1, 1, 1);
-  qmi.enableMotionDetect(SensorQMI8658::INTERRUPT_PIN_1);
-  attachInterrupt(IMU_IRQ, setFlag, CHANGE);
   ELM_SER.setTX(PIN_TX);
   ELM_SER.setRX(PIN_RX);
   ELM_SER.begin(38400);
@@ -117,40 +76,44 @@ void setup() {
   make_screen_elements();
   make_styles();
   last_time = millis();
-  try_time = millis();
+  atm_time = millis();
 }
 
 void loop() {
-  if (millis() - last_time >= increment) { // non-blocking way to periodically perform tasks
+  if (millis() - last_time >= increment || increment > 1000) { // non-blocking way to periodically perform tasks
     increment = lv_timer_handler();
-    last_time = millis();
-  }
-  if (interruptFlag) {
-    noInterrupts();
-    interruptFlag = false;
-    interrupts();
-    uint8_t status = qmi.getStatusRegister();
-    if (status & SensorQMI8658::EVENT_ANY_MOTION) {} //capture millis() here
-  } // does this fire too on SIGNIFICANT?
-  if (try_again > 0 && millis() - try_time > 10 * ELM_TIMEOUT) {
-    try_time = millis();
-    if (!my_ELM.begin(ELM_SER, ELM_DEBUG, ELM_TIMEOUT)) { --try_again; }
-    else { try_again = 0; }
-  } else {
-  // if (!data_ready) {
-  //   if (my_ELM.nb_rx_state != ELM_GETTING_MSG) { my_ELM.sendCommand(pids[cur_PID]); }
-  // } else { noInterrupts(); data_ready = false; interrupts(); ...
-    if(pid_handlers[cur_PID]()) { // calc_angle();
-      if (PID_COUNT == cur_PID + 1) {
-        calc_angle();
-        lv_tick_inc(millis() - last_time);
-        Serial.print("angle: ");
-        if (boost_data.is_psi) { Serial.println(boost_data.boost_angle);
-        } else { Serial.println(boost_data.boost_angle - 40); }
-      }
-      cur_PID = ++cur_PID % PID_COUNT; // lv_tick_inc(millis() - last_time);
+    last_time = millis(); }
+    Serial.print("inc ms: ");
+    Serial.println(increment);
+//  }
+  
+  if(pid_handlers[cur_PID]()) {
+    Serial.print("curr PID: ");
+    Serial.println(pids[cur_PID]);
+    if (cur_PID < 2) {
+      cur_PID = ++cur_PID;
+    } else if (millis() > atm_time) {
+      cur_PID = 3;
+      atm_time = millis() + 10000;
+    } else {
+      cur_PID = 0;
     }
+    if (0 == cur_PID) {
+      calc_angle();
+      lv_tick_inc(millis() - last_time);
+      Serial.print("angle: ");
+      if (boost_data.is_psi) { Serial.println(boost_data.boost_angle);
+      } else { Serial.println(boost_data.boost_angle - 40); }
+    } // lv_tick_inc(millis() - last_time);
+    clearELMBuffer();
   }
+}
+
+void clearELMBuffer() {
+    unsigned long timeout = millis() + 100; // 100ms timeout
+    while (millis() < timeout && ELM_SER.available()) {
+        ELM_SER.read();
+    }
 }
 
 bool handle_IAT() {
@@ -199,7 +162,7 @@ typedef struct {
     TFT_eSPI *tft;
 } lv_tft_espi_t;
 
-lv_display_t *my_tft_espi_create(uint8_t hor_res, uint8_t ver_res, void *buf, uint32_t buf_size) {
+lv_display_t *my_tft_espi_create(uint8_t hor_res, uint8_t ver_res, void *buf1, void *buf2, uint32_t buf_size) {
   lv_tft_espi_t *dsc = (lv_tft_espi_t *)lv_malloc_zeroed(sizeof(lv_tft_espi_t));
   lv_display_t *disp = lv_display_create(hor_res, ver_res);
   dsc->tft = new TFT_eSPI(hor_res, ver_res);
@@ -208,7 +171,7 @@ lv_display_t *my_tft_espi_create(uint8_t hor_res, uint8_t ver_res, void *buf, ui
   dsc->tft->initDMA();
   lv_display_set_driver_data(disp, (void *)dsc);
   lv_display_set_flush_cb(disp, flush_cb);
-  lv_display_set_buffers(disp, (void *)buf, NULL, buf_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
+  lv_display_set_buffers(disp, (void *)buf1, (void *)buf2, buf_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
   return disp;
 }
 
@@ -237,32 +200,9 @@ void make_scale(lv_obj_t *scale, uint8_t size, bool inner, bool center, uint8_t 
   lv_scale_set_text_src(scale, labels);
 }
 
-void touchpad_read(lv_indev_t *indev, lv_indev_data_t *data) {
-  uint8_t last_x = 0;
-  uint8_t last_y = 0;
-  if(is_pressed) {
-    is_pressed = false;
-    uint8_t touched = touch.getPoint(x, y, touch.getSupportTouchPoint());
-    if(touched) {
-      last_x = x[0];
-      last_y = y[0];
-      data->state = LV_INDEV_STATE_PR;
-      lv_obj_set_style_bg_color(lv_screen_active(),red,LV_PART_MAIN);
-    }
-  } else {
-    data->state = LV_INDEV_STATE_REL;
-    lv_obj_set_style_bg_color(lv_screen_active(),blue,LV_PART_MAIN);
-  }
-  data->point.x = last_x;
-  data->point.y = last_y;
-}
-
 void make_screen_elements() {
   lv_init();
-  disp = my_tft_espi_create(TFT_HOR_RES, TFT_VER_RES, draw_buf, sizeof(draw_buf));
-  lv_indev_t *indev = lv_indev_create(); // touch input device
-  lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
-  lv_indev_set_read_cb(indev, touchpad_read);
+  disp = my_tft_espi_create(TFT_HOR_RES, TFT_VER_RES, draw_buf1, draw_buf2, sizeof(draw_buf1));
 
   psi_scale = lv_scale_create(lv_screen_active());
   static const char *psi_custom_labels[] = {
@@ -271,6 +211,8 @@ void make_screen_elements() {
   lv_obj_set_style_bg_opa(psi_scale, LV_OPA_COVER, 0);
   lv_obj_set_style_bg_color(psi_scale,lv_color_hex(0x051209),0);
   lv_obj_set_style_radius(psi_scale,240,0);
+  //lv_obj_set_style_radial_offset(psi_scale,100,LV_PART_INDICATOR);
+  //lv_obj_set_style_transform_scale(psi_scale, 200, LV_PART_INDICATOR);
   needle = lv_image_create(lv_screen_active());
   lv_image_set_src(needle,&NEEDLE1);
   lv_scale_set_image_needle_value(psi_scale,needle,boost_data.boost_angle);
